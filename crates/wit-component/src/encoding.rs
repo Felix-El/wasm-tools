@@ -584,7 +584,7 @@ impl<'a> EncodingState<'a> {
         for (name, item) in resolve.worlds[world].imports.iter() {
             let func = match item {
                 WorldItem::Function(f) => f,
-                WorldItem::Interface { .. } | WorldItem::Type { .. } => continue,
+                WorldItem::Interface { .. } | WorldItem::UseSlot { .. } | WorldItem::Type { .. } => continue,
             };
             let name = resolve.name_world_key(name);
             if !(info
@@ -751,7 +751,8 @@ impl<'a> EncodingState<'a> {
                         None,
                     );
                 }
-                item @ WorldItem::Interface { id, .. } => {
+                item @ WorldItem::Interface { id, .. }
+                | item @ WorldItem::UseSlot { id, .. } => {
                     let core_names = interface_func_core_names.get(export_name);
                     self.encode_interface_export(
                         &export_string,
@@ -1577,7 +1578,7 @@ impl<'a> EncodingState<'a> {
         });
         for (for_module, key) in main_module_keys.chain(adapter_keys) {
             let id = match &world.exports[key] {
-                WorldItem::Interface { id, .. } => *id,
+                WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => *id,
                 WorldItem::Type { .. } => unreachable!(),
                 WorldItem::Function(_) => continue,
             };

@@ -481,6 +481,13 @@ impl<O: Output> WitPrinter<O> {
                     None
                 }
             }
+            WorldItem::UseSlot { id, .. } => {
+                if matches!(name, WorldKey::Name(_)) {
+                    Some(&resolve.interfaces[*id].docs)
+                } else {
+                    None
+                }
+            }
             WorldItem::Function(f) => Some(&f.docs),
             // Types are handled separately
             WorldItem::Type { .. } => unreachable!(),
@@ -496,7 +503,7 @@ impl<O: Output> WitPrinter<O> {
         match name {
             WorldKey::Name(name) => {
                 match item {
-                    WorldItem::Interface { id, .. } => {
+                    WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => {
                         self.print_name_type(name, TypeKind::Other);
                         self.output.str(": ");
                         if resolve.interfaces[*id].name.is_none() {

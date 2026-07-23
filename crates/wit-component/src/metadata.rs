@@ -91,6 +91,7 @@ impl Default for Bindgen {
             includes: Default::default(),
             package: Some(package),
             stability: Default::default(),
+            use_slots: Default::default(),
             span: Default::default(),
         });
         resolve.packages[package]
@@ -164,6 +165,12 @@ impl EncodingMap {
                     self.encodings.insert(key, encoding);
                 }
                 WorldItem::Interface { id, .. } => {
+                    for (func, _) in resolve.interfaces[*id].functions.iter() {
+                        let key = self.key(resolve, name, func);
+                        self.encodings.insert(key, encoding);
+                    }
+                }
+                WorldItem::UseSlot { id, .. } => {
                     for (func, _) in resolve.interfaces[*id].functions.iter() {
                         let key = self.key(resolve, name, func);
                         self.encodings.insert(key, encoding);

@@ -300,7 +300,7 @@ impl Adapter {
 
         for (key, import) in world.imports.iter() {
             match import {
-                WorldItem::Interface { id, .. } => {
+                WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => {
                     for (_, func) in resolve.interfaces[*id].functions.iter() {
                         self.collect_payload_data_for_func(resolve, Some(key), func, "", data);
                     }
@@ -314,7 +314,7 @@ impl Adapter {
 
         for (key, export) in world.exports.iter() {
             match export {
-                WorldItem::Interface { id, .. } => {
+                WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => {
                     for (_, func) in resolve.interfaces[*id].functions.iter() {
                         self.collect_payload_data_for_func(
                             resolve,
@@ -347,7 +347,7 @@ impl Adapter {
         // found.
         for (interface, import) in world.imports.iter() {
             match import {
-                WorldItem::Interface { id, .. } => {
+                WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => {
                     for (_, func) in resolve.interfaces[*id].functions.iter() {
                         self.add_imported_func(resolve, Some(interface), func, &mut ret);
                     }
@@ -371,7 +371,7 @@ impl Adapter {
                 WorldItem::Function(func) => {
                     self.add_imported_func_intrinsics_for_export(resolve, None, func, &mut ret);
                 }
-                WorldItem::Interface { id: export, .. } => {
+                WorldItem::Interface { id: export, .. } | WorldItem::UseSlot { id: export, .. } => {
                     for (_, ty) in resolve.interfaces[*export].types.iter() {
                         self.add_imported_type_intrinsics_for_export(resolve, Some(name), *ty);
                     }
@@ -595,7 +595,7 @@ impl Adapter {
         for (_, export) in world.exports.iter() {
             match export {
                 WorldItem::Function(func) => import_types.add_func(resolve, func),
-                WorldItem::Interface { .. } => {}
+                WorldItem::Interface { .. } | WorldItem::UseSlot { .. } => {}
                 WorldItem::Type { .. } => unreachable!(),
             }
         }
@@ -1373,7 +1373,7 @@ fn imported_types_used_by_exported_interfaces(resolve: &Resolve, world: WorldId)
     for (_, export) in resolve.worlds[world].exports.iter() {
         match export {
             WorldItem::Function(_) => {}
-            WorldItem::Interface { id, .. } => {
+            WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => {
                 exported_interfaces.insert(*id);
                 live_export_types.add_interface(resolve, *id)
             }

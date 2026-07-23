@@ -388,6 +388,10 @@ pub struct World {
     #[cfg_attr(feature = "serde", serde(skip))]
     pub includes: Vec<WorldInclude>,
 
+    /// `use name: iface;` slots — anonymous identity variables in this world.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub use_slots: IndexMap<String, WorldItem>,
+
     /// Source span for this world.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub span: Span,
@@ -402,6 +406,9 @@ impl World {
         }
         for include in &mut self.includes {
             include.span.adjust(offset);
+        }
+        for item in self.use_slots.values_mut() {
+            item.adjust_spans(offset);
         }
     }
 }
@@ -490,6 +497,19 @@ impl WorldKey {
     }
 }
 
+/// An entry in a `with` clause, equating a dependency slot with an identity variable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize))]
+pub struct WithEntry {
+    /// The dependency slot name within the consumer's interface (e.g. `types`
+    /// in `greeter { use types.{greeting}; }`).
+    pub slot_name: String,
+
+    /// The identity variable in scope to equate it with (an `import`, `export`,
+    /// or `use` name).
+    pub use_target: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
@@ -514,6 +534,10 @@ pub enum WorldItem {
         docs: Docs,
         #[cfg_attr(feature = "serde", serde(skip))]
         span: Span,
+
+        /// Identity equations from `with` clauses on this import/export.
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+        with: Vec<WithEntry>,
     },
 
     /// A function is being directly imported or exported from this world.
@@ -524,6 +548,23 @@ pub enum WorldItem {
     /// Note that types are never imported into worlds at this time.
     #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_id_ignore_span"))]
     Type { id: TypeId, span: Span },
+
+    /// A `use name: iface;` slot in a world — an anonymous identity variable.
+    /// The interface is resolved to `InterfaceId`, and any `with` clauses on
+    /// this use-slot are stored in `with`.
+    UseSlot {
+        /// The interface this slot provides.
+        #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_id"))]
+        id: InterfaceId,
+        /// The local name of this slot.
+        name: String,
+        /// Identity equations from `with` clauses on this use-slot.
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+        with: Vec<WithEntry>,
+        /// Source span.
+        #[cfg_attr(feature = "serde", serde(skip))]
+        span: Span,
+    },
 }
 
 impl WorldItem {
@@ -532,6 +573,7 @@ impl WorldItem {
             WorldItem::Interface { stability, .. } => stability,
             WorldItem::Function(f) => &f.stability,
             WorldItem::Type { id, .. } => &resolve.types[*id].stability,
+            WorldItem::UseSlot { .. } => &Stability::Unknown,
         }
     }
 
@@ -540,6 +582,7 @@ impl WorldItem {
             WorldItem::Interface { span, .. } => *span,
             WorldItem::Function(f) => f.span,
             WorldItem::Type { span, .. } => *span,
+            WorldItem::UseSlot { span, .. } => *span,
         }
     }
 
@@ -548,6 +591,7 @@ impl WorldItem {
             WorldItem::Function(f) => f.adjust_spans(offset),
             WorldItem::Interface { span, .. } => span.adjust(offset),
             WorldItem::Type { span, .. } => span.adjust(offset),
+            WorldItem::UseSlot { span, .. } => span.adjust(offset),
         }
     }
 }

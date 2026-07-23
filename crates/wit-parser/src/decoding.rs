@@ -305,6 +305,7 @@ impl ComponentInfo {
             package: None,
             includes: Default::default(),
             stability: Default::default(),
+            use_slots: IndexMap::default(),
             span: Default::default(),
         });
         let mut package = Package {
@@ -732,6 +733,7 @@ impl WitPackageDecoder<'_> {
                 docs: Default::default(),
                 span: Default::default(),
                 external_id: item.external_id.clone(),
+                with: Vec::new(),
             },
         ))
     }
@@ -1113,6 +1115,7 @@ impl WitPackageDecoder<'_> {
             includes: Default::default(),
             package: None,
             stability: Default::default(),
+            use_slots: IndexMap::default(),
             span: Default::default(),
         };
 
@@ -1572,6 +1575,7 @@ impl WitPackageDecoder<'_> {
                 .filter_map(|item| match item {
                     WorldItem::Interface { id, .. } => Some(*id),
                     WorldItem::Function(_) | WorldItem::Type { .. } => None,
+                    WorldItem::UseSlot { .. } => None,
                 }),
         );
         for iface in interfaces {

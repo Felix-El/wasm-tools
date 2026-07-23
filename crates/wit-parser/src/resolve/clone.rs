@@ -105,6 +105,14 @@ impl<'a> Cloner<'a> {
                 }
                 self.interface(id);
             }
+            WorldItem::UseSlot { id, .. } => {
+                // UseSlots are anonymous identity variables — clone the interface
+                // like an anonymous interface.
+                if self.resolve.interfaces[*id].name.is_some() {
+                    return;
+                }
+                self.interface(id);
+            }
         }
     }
 

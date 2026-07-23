@@ -330,6 +330,7 @@ impl<'a> Resolver<'a> {
             package: None,
             includes: Default::default(),
             stability: Default::default(),
+            use_slots: IndexMap::default(),
             span,
         })
     }
@@ -610,13 +611,14 @@ impl<'a> Resolver<'a> {
                 ast::WorldItem::Type(t) => Some(TypeItem::Def(t)),
                 ast::WorldItem::Import(_) | ast::WorldItem::Export(_) => None,
                 // should be handled in `wit-parser::resolve`
-                ast::WorldItem::Include(_) => None,
+                ast::WorldItem::Include(_) | ast::WorldItem::WorldUseSlot(_) => None,
             }),
         )?;
 
         // resolve include items
         let items = world.items.iter().filter_map(|i| match i {
             ast::WorldItem::Include(i) => Some(i),
+            ast::WorldItem::WorldUseSlot(_) => None,
             _ => None,
         });
         for include in items {
@@ -644,8 +646,9 @@ impl<'a> Resolver<'a> {
         let mut imported_interfaces = HashSet::new();
         let mut exported_interfaces = HashSet::new();
         for item in world.items.iter() {
-            let (docs, attrs, kind, desc, interfaces) = match item {
+            let (with_items, docs, attrs, kind, desc, interfaces) = match item {
                 ast::WorldItem::Import(import) => (
+                    &import.with,
                     &import.docs,
                     &import.attributes,
                     &import.kind,
@@ -653,12 +656,35 @@ impl<'a> Resolver<'a> {
                     &mut imported_interfaces,
                 ),
                 ast::WorldItem::Export(export) => (
+                    &export.with,
                     &export.docs,
                     &export.attributes,
                     &export.kind,
                     "export",
                     &mut exported_interfaces,
                 ),
+
+                ast::WorldItem::WorldUseSlot(slot) => {
+                    let (item, name, span) = self.resolve_ast_item_path(&slot.path)?;
+                    let id = self.extract_iface_from_item(&item, &name, span)?;
+                    let with = slot.with.iter().map(|e| {
+                        WithEntry {
+                            slot_name: e.slot_name.name.to_string(),
+                            use_target: e.use_target.name.to_string(),
+                        }
+                    }).collect();
+                    let prev = self.worlds[world_id].use_slots.insert(
+                        slot.name.name.to_string(),
+                        WorldItem::UseSlot { id, name: slot.name.name.to_string(), with, span: slot.name.span },
+                    );
+                    if prev.is_some() {
+                        return Err(ParseError::new_syntax(
+                            slot.name.span,
+                            format!("use slot `{}` conflicts with prior use of same name", slot.name.name),
+                        ));
+                    }
+                    continue;
+                }
 
                 ast::WorldItem::Type(ast::TypeDef {
                     name,
@@ -670,9 +696,6 @@ impl<'a> Resolver<'a> {
                         let prev = self.worlds[world_id]
                             .imports
                             .insert(WorldKey::Name(func.name.clone()), WorldItem::Function(func));
-                        // Resource names themselves are unique, and methods are
-                        // uniquely named, so this should be possible to assert
-                        // at this point and never trip.
                         assert!(prev.is_none());
                     }
                     continue;
@@ -684,7 +707,16 @@ impl<'a> Resolver<'a> {
                 }
             };
 
-            let world_item = self.resolve_world_item(docs, attrs, kind)?;
+            let mut world_item = self.resolve_world_item(docs, attrs, kind)?;
+            // Propagate `with` entries into the resolved WorldItem::Interface
+            if let WorldItem::Interface { with, .. } = &mut world_item {
+                for entry in with_items {
+                    with.push(WithEntry {
+                        slot_name: entry.slot_name.name.to_string(),
+                        use_target: entry.use_target.name.to_string(),
+                    });
+                }
+            }
             let key = match kind {
                 // Interfaces are always named exactly as they are in the WIT.
                 ast::ExternKind::Interface(name, _) => WorldKey::Name(name.name.to_string()),
@@ -728,6 +760,7 @@ impl<'a> Resolver<'a> {
                     WorldItem::Interface { .. } => "interface",
                     WorldItem::Function(..) => "func",
                     WorldItem::Type { .. } => "type",
+                    WorldItem::UseSlot { .. } => "use-slot",
                 };
                 let name = match key {
                     WorldKey::Name(name) => name,
@@ -764,6 +797,7 @@ impl<'a> Resolver<'a> {
                     docs: Default::default(),
                     span: name.span,
                     external_id,
+                    with: Vec::new(),
                 })
             }
             ast::ExternKind::Path(path) => {
@@ -778,6 +812,7 @@ impl<'a> Resolver<'a> {
                     external_id,
                     docs,
                     span: item_span,
+                    with: Vec::new(),
                 })
             }
             ast::ExternKind::NamedPath(name, path) => {
@@ -792,6 +827,7 @@ impl<'a> Resolver<'a> {
                     external_id,
                     docs,
                     span: name.span,
+                    with: Vec::new(),
                 })
             }
             ast::ExternKind::Func(name, func) => {

@@ -80,6 +80,11 @@ pub fn encode_world(resolve: &Resolve, world_id: WorldId) -> Result<ComponentTyp
                 let idx = component.encode_instance(*id)?;
                 ComponentTypeRef::Instance(idx)
             }
+            WorldItem::UseSlot { id, .. } => {
+                component.interface = Some(*id);
+                let idx = component.encode_instance(*id)?;
+                ComponentTypeRef::Instance(idx)
+            }
             WorldItem::Function(f) => {
                 component.interface = None;
                 let idx = component.encode_func_type(resolve, f)?;
@@ -102,6 +107,11 @@ pub fn encode_world(resolve: &Resolve, world_id: WorldId) -> Result<ComponentTyp
         log::trace!("encoding export {}", resolve.name_world_key(key));
         let ty = match export {
             WorldItem::Interface { id, .. } => {
+                component.interface = Some(*id);
+                let idx = component.encode_instance(*id)?;
+                ComponentTypeRef::Instance(idx)
+            }
+            WorldItem::UseSlot { id, .. } => {
                 component.interface = Some(*id);
                 let idx = component.encode_instance(*id)?;
                 ComponentTypeRef::Instance(idx)

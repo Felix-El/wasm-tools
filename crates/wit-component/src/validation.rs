@@ -1497,7 +1497,7 @@ impl ExportMap {
                 }
             };
             match &resolve.worlds[world].exports[export] {
-                WorldItem::Interface { id, .. } => {
+                WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => {
                     for (name, _) in resolve.interfaces[*id].functions.iter() {
                         require_interface_func(*id, name)?;
                     }
@@ -1996,7 +1996,7 @@ impl Standard {
 
         for export in exports {
             let id = match &world.exports[export] {
-                WorldItem::Interface { id, .. } => *id,
+                WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => *id,
                 WorldItem::Function(_) => continue,
                 WorldItem::Type { .. } => unreachable!(),
             };
@@ -2515,7 +2515,7 @@ impl NameMangling for Legacy {
                         return Some((name, None, f));
                     }
                 }
-                WorldItem::Interface { id, .. } => {
+                WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => {
                     let string = resolve.name_world_key(name);
                     for (_, func) in resolve.interfaces[*id].functions.iter() {
                         if func.legacy_core_export_name(Some(&string)) == export_name {
@@ -2541,7 +2541,7 @@ impl NameMangling for Legacy {
         let world = &resolve.worlds[world];
         for name in exports {
             let id = match &world.exports[name] {
-                WorldItem::Interface { id, .. } => *id,
+                WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => *id,
                 WorldItem::Function(_) => continue,
                 WorldItem::Type { .. } => unreachable!(),
             };

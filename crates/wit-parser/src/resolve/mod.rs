@@ -675,8 +675,21 @@ impl Resolve {
                                     WorldItem::Type { id, .. } => {
                                         *id = remap.map_type(*id, Default::default())?
                                     }
+                                    WorldItem::UseSlot { id, .. } => {
+                                        *id = remap.map_interface(*id, Default::default())?;
+                                    }
                                 }
                                 map.insert(name, item);
+                            }
+                            // Also remap use_slots
+                            for (name, mut item) in mem::take(&mut world.use_slots) {
+                                match &mut item {
+                                    WorldItem::UseSlot { id, .. } => {
+                                        *id = remap.map_interface(*id, Default::default())?;
+                                    }
+                                    _ => unreachable!(),
+                                }
+                                world.use_slots.insert(name, item);
                             }
                             Ok(())
                         };
@@ -996,7 +1009,8 @@ impl Resolve {
             // Kind-level mismatches are caught here.
             (WorldItem::Interface { .. }, _)
             | (WorldItem::Function { .. }, _)
-            | (WorldItem::Type { .. }, _) => {
+            | (WorldItem::Type { .. }, _)
+            | (WorldItem::UseSlot { .. }, _) => {
                 bail!("different kinds of items");
             }
         }
@@ -1083,6 +1097,7 @@ impl Resolve {
             WorldItem::Function(_) => {}
             WorldItem::Type { id, .. } => ty = Some(*id),
             WorldItem::Interface { id, .. } => interface = Some(*id),
+            WorldItem::UseSlot { id, .. } => interface = Some(*id),
         }
 
         interface
@@ -1575,6 +1590,7 @@ impl Resolve {
             WorldItem::Interface { external_id, .. } => external_id.clone(),
             WorldItem::Function(f) => f.external_id.clone(),
             WorldItem::Type { id, .. } => self.types[*id].external_id.clone(),
+            WorldItem::UseSlot { .. } => None,
         }
     }
 
@@ -1641,7 +1657,12 @@ impl Resolve {
                         WorldItem::Interface { id, .. } => Some(*id),
                         WorldItem::Function(_) => None,
                         WorldItem::Type { id, .. } => self.type_interface_dep(*id),
+                        WorldItem::UseSlot { .. } => None,
                     })
+                    .chain(world.use_slots.iter().filter_map(|(_name, item)| match item {
+                        WorldItem::UseSlot { id, .. } => Some(*id),
+                        _ => None,
+                    }))
             }))
             .filter_map(move |iface_id| {
                 let pkg = self.interfaces[iface_id].package?;
@@ -1767,6 +1788,7 @@ impl Resolve {
                         assert_eq!(ty.name, Some(name.clone().unwrap_name()));
                         assert_eq!(ty.owner, TypeOwner::World(id));
                     }
+                    WorldItem::UseSlot { .. } => {}
                 }
             }
             self.assert_world_elaborated(world);
@@ -1875,6 +1897,7 @@ impl Resolve {
                         );
                     }
                 }
+                WorldItem::UseSlot { .. } => {}
             }
         }
         for (key, item) in world.exports.iter() {
@@ -1915,6 +1938,7 @@ impl Resolve {
 
                 // exported types not allowed at this time
                 WorldItem::Type { .. } => unreachable!(),
+                WorldItem::UseSlot { .. } => {}
             }
         }
     }
@@ -2104,6 +2128,7 @@ impl Resolve {
                     4
                 }
             }
+            WorldItem::UseSlot { .. } => 5,
         };
 
         // Sort world items when we start to elaborate the world to start with a
@@ -2119,16 +2144,33 @@ impl Resolve {
                     stability,
                     docs,
                     external_id,
+                    with,
                     ..
                 } => {
-                    self.elaborate_world_import(
-                        &mut new_imports,
-                        name.clone(),
-                        *id,
-                        &stability,
-                        docs,
-                        external_id.as_deref(),
-                    );
+                    if !new_imports.contains_key(name) {
+                        for dep in self.interface_direct_deps(*id) {
+                            self.elaborate_world_import(
+                                &mut new_imports,
+                                WorldKey::Interface(dep),
+                                dep,
+                                stability,
+                                &Docs::default(),
+                                None,
+                            );
+                        }
+                        let prev = new_imports.insert(
+                            name.clone(),
+                            WorldItem::Interface {
+                                id: *id,
+                                stability: stability.clone(),
+                                docs: docs.clone(),
+                                span: Default::default(),
+                                external_id: external_id.clone(),
+                                with: with.clone(),
+                            },
+                        );
+                        assert!(prev.is_none());
+                    }
                 }
 
                 // Functions are added as-is since their dependence on types in
@@ -2155,6 +2197,12 @@ impl Resolve {
                     let prev = new_imports.insert(name.clone(), item.clone());
                     assert!(prev.is_none());
                 }
+
+                // Use slots are identity variables — pass them through as-is.
+                WorldItem::UseSlot { .. } => {
+                    let prev = new_imports.insert(name.clone(), item.clone());
+                    assert!(prev.is_none());
+                }
             }
         }
 
@@ -2176,6 +2224,7 @@ impl Resolve {
                     assert!(prev.is_none());
                 }
                 WorldItem::Type { .. } => unreachable!(),
+                WorldItem::UseSlot { .. } => unreachable!(),
             }
         }
 
@@ -2229,6 +2278,7 @@ impl Resolve {
                 docs: docs.clone(),
                 span: Default::default(),
                 external_id: external_id.map(|s| s.to_string()),
+                with: Vec::new(),
             },
         );
         assert!(prev.is_none());
@@ -2363,6 +2413,7 @@ impl Resolve {
                     docs: Default::default(),
                     span: Default::default(),
                     external_id: external_id.clone(),
+                    with: Vec::new(),
                 };
                 let key = WorldKey::Interface(dep);
                 let add_export = add_export && export_interfaces.contains_key(&key);
@@ -2477,6 +2528,7 @@ impl Resolve {
                     docs: Default::default(),
                     span: Default::default(),
                     external_id: Default::default(),
+                    with: Vec::new(),
                 },
                 &WorldItem::Interface {
                     id: *replace_with,
@@ -2484,6 +2536,7 @@ impl Resolve {
                     docs: Default::default(),
                     span: Default::default(),
                     external_id: Default::default(),
+                    with: Vec::new(),
                 },
             )
             .with_context(|| {
@@ -2565,6 +2618,7 @@ impl Resolve {
                 }
             }
             WorldItem::Function(_) => {}
+            WorldItem::UseSlot { .. } => {}
         }
     }
 
@@ -3119,6 +3173,7 @@ impl Resolve {
                 // Functions/types aren't rewritten, they're all nominal at the
                 // world-level anyway.
                 WorldItem::Function(_) | WorldItem::Type { .. } => continue,
+                WorldItem::UseSlot { .. } => continue,
             };
 
             // If this interface itself is being visited for the second time
@@ -4117,6 +4172,9 @@ impl Remap {
                 WorldItem::Type { .. } => {
                     // already mapped above
                 }
+                WorldItem::UseSlot { id, .. } => {
+                    *id = self.map_interface(*id, span)?;
+                }
             }
 
             let dst = if import {
@@ -4126,6 +4184,18 @@ impl Remap {
             };
             let prev = dst.insert(name, item);
             assert!(prev.is_none());
+        }
+
+        // Also remap use_slots
+        for (name, mut item) in mem::take(&mut world.use_slots) {
+            let span = item.span();
+            match &mut item {
+                WorldItem::UseSlot { id, .. } => {
+                    *id = self.map_interface(*id, span)?;
+                }
+                _ => unreachable!(),
+            }
+            world.use_slots.insert(name, item);
         }
 
         Ok(())
@@ -4324,6 +4394,7 @@ impl Remap {
                     WorldItem::Function(f) => f.name = n.clone(),
                     WorldItem::Type { id, .. } => cloner.resolve.types[*id].name = Some(n.clone()),
                     WorldItem::Interface { .. } => {}
+                    WorldItem::UseSlot { .. } => {}
                 }
 
                 let prev = get_items(cloner.resolve).insert(key, new_item);
@@ -4364,6 +4435,7 @@ impl Remap {
                     (WorldItem::Interface { .. }, _) => unreachable!(),
                     (WorldItem::Function(_), _) => unreachable!(),
                     (WorldItem::Type { .. }, _) => unreachable!(),
+                    (WorldItem::UseSlot { .. }, _) => unreachable!(),
                 }
             }
         };
@@ -4774,7 +4846,8 @@ impl<'a> MergeMap<'a> {
 
             (WorldItem::Interface { .. }, _)
             | (WorldItem::Function(_), _)
-            | (WorldItem::Type { .. }, _) => {
+            | (WorldItem::Type { .. }, _)
+            | (WorldItem::UseSlot { .. }, _) => {
                 bail!("world items do not have the same type")
             }
         }

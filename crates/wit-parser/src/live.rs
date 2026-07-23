@@ -95,6 +95,7 @@ pub trait TypeIdVisitor {
             WorldItem::Interface { id, .. } => self.visit_interface(resolve, *id),
             WorldItem::Function(f) => self.visit_func(resolve, f),
             WorldItem::Type { id, .. } => self.visit_type_id(resolve, *id),
+            WorldItem::UseSlot { id, .. } => self.visit_interface(resolve, *id),
         }
     }
 

@@ -112,6 +112,9 @@ impl<'a> ComponentWorld<'a> {
                         WorldItem::Interface { id, .. } => {
                             resolve.interfaces[*id].functions.is_empty()
                         }
+                        WorldItem::UseSlot { id, .. } => {
+                            resolve.interfaces[*id].functions.is_empty()
+                        }
                         WorldItem::Type { .. } => true,
                     })
             };
@@ -254,11 +257,11 @@ impl<'a> ComponentWorld<'a> {
             log::trace!("register import `{name}`");
             let import_map_key = match item {
                 WorldItem::Function(_) | WorldItem::Type { .. } => None,
-                WorldItem::Interface { .. } => Some(name),
+                WorldItem::Interface { .. } | WorldItem::UseSlot { .. } => Some(name),
             };
             let interface_id = match item {
                 WorldItem::Function(_) | WorldItem::Type { .. } => None,
-                WorldItem::Interface { id, .. } => Some(*id),
+                WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => Some(*id),
             };
             let implements = resolve.implements_value(key, item);
             // Note that `external_id` is only tracked for interface imports
@@ -267,7 +270,7 @@ impl<'a> ComponentWorld<'a> {
             // which is emitted on a per-item basis instead.
             let external_id = match item {
                 WorldItem::Function(_) | WorldItem::Type { .. } => None,
-                WorldItem::Interface { .. } => resolve.external_id_value(key, item),
+                WorldItem::Interface { .. } | WorldItem::UseSlot { .. } => resolve.external_id_value(key, item),
             };
             let interface = import_map
                 .entry(import_map_key)
@@ -287,7 +290,7 @@ impl<'a> ComponentWorld<'a> {
                 WorldItem::Type { id, .. } => {
                     interface.add_type(required, resolve, *id);
                 }
-                WorldItem::Interface { id, .. } => {
+                WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => {
                     for (_name, ty) in resolve.interfaces[*id].types.iter() {
                         interface.add_type(required, resolve, *ty);
                     }
@@ -331,7 +334,7 @@ impl<'a> ComponentWorld<'a> {
         for (name, item) in resolve.worlds[world].exports.iter() {
             log::trace!("add live world export `{}`", resolve.name_world_key(name));
             let id = match item {
-                WorldItem::Interface { id, .. } => id,
+                WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => id,
                 WorldItem::Function(_) | WorldItem::Type { .. } => {
                     live.add_world_item(resolve, item);
                     continue;
@@ -466,7 +469,7 @@ impl<'a> ComponentWorld<'a> {
         for (_key, item) in exports.iter() {
             let id = match item {
                 WorldItem::Function(_) => continue,
-                WorldItem::Interface { id, .. } => *id,
+                WorldItem::Interface { id, .. } | WorldItem::UseSlot { id, .. } => *id,
                 WorldItem::Type { .. } => unreachable!(),
             };
             let mut set = HashSet::new();

@@ -194,6 +194,10 @@ impl<'a> DeclList<'a> {
                                 WorldOrInterface::World,
                             )?,
                             WorldItem::Type(_) => {}
+                            WorldItem::WorldUseSlot(slot) => {
+                                // Register the use-slot's path for dep resolution
+                                f(None, &slot.attributes, &slot.path, None, WorldOrInterface::Interface)?;
+                            }
                             WorldItem::Import(Import {
                                 kind, attributes, ..
                             }) => imports.push((kind, attributes)),
@@ -400,6 +404,9 @@ enum WorldItem<'a> {
     Use(Use<'a>),
     Type(TypeDef<'a>),
     Include(Include<'a>),
+    /// A `use name: iface;` statement in a world — introduces an anonymous
+    /// identity variable. Distinct from `Use` which is `use path.{names}`.
+    WorldUseSlot(WorldUseSlot<'a>),
 }
 
 impl<'a> WorldItem<'a> {
@@ -415,7 +422,31 @@ impl<'a> WorldItem<'a> {
             Some((_span, Token::Export)) => {
                 Export::parse(tokens, docs, attributes).map(WorldItem::Export)
             }
-            Some((_span, Token::Use)) => Use::parse(tokens, attributes).map(WorldItem::Use),
+            Some((_span, Token::Use)) => {
+                // Disambiguate:
+                //   use path.{names}  → existing Use (types from interface)
+                //   use name: path     → WorldUseSlot (identity variable)
+                // Try Use first (established syntax). On failure, try WorldUseSlot.
+                let saved_tokens = tokens.clone();
+                let saved_attrs = attributes.clone();
+                match Use::parse(tokens, attributes) {
+                    Ok(use_item) => Ok(WorldItem::Use(use_item)),
+                    Err(use_err) => {
+                        *tokens = saved_tokens;
+                        // Only try WorldUseSlot if it looks like `use name:`
+                        let mut peek = tokens.clone();
+                        peek.expect(Token::Use)?;
+                        if parse_id(&mut peek).is_ok()
+                            && peek.clone().eat(Token::Colon).unwrap_or(false)
+                        {
+                            WorldUseSlot::parse(tokens, docs, saved_attrs)
+                                .map(WorldItem::WorldUseSlot)
+                        } else {
+                            Err(use_err)
+                        }
+                    }
+                }
+            }
             Some((_span, Token::Type)) => {
                 TypeDef::parse(tokens, docs, attributes).map(WorldItem::Type)
             }
@@ -447,10 +478,75 @@ impl<'a> WorldItem<'a> {
     }
 }
 
+struct WithEntry<'a> {
+    slot_name: Id<'a>,
+    use_target: Id<'a>,
+}
+
+impl<'a> WithEntry<'a> {
+    fn parse(tokens: &mut Tokenizer<'a>) -> ParseResult<Self> {
+        let slot_name = parse_id(tokens)?;
+        let use_target = if tokens.eat(Token::As)? {
+            parse_id(tokens)?
+        } else {
+            slot_name.clone()  // shorthand: `with { x }` ≡ `with { x as x }`
+        };
+        Ok(WithEntry { slot_name, use_target })
+    }
+}
+
+/// Parse `with '{' entry (',' entry)* '}'`
+fn parse_with_clause<'a>(tokens: &mut Tokenizer<'a>) -> ParseResult<Vec<WithEntry<'a>>> {
+    if !tokens.eat(Token::With)? {
+        return Ok(Vec::new());
+    }
+    tokens.expect(Token::LeftBrace)?;
+    let mut entries = Vec::new();
+    loop {
+        if tokens.eat(Token::RightBrace)? {
+            break;
+        }
+        if !entries.is_empty() {
+            tokens.expect(Token::Comma)?;
+            if tokens.eat(Token::RightBrace)? {
+                break;
+            }
+        }
+        entries.push(WithEntry::parse(tokens)?);
+    }
+    Ok(entries)
+}
+
+struct WorldUseSlot<'a> {
+    #[allow(dead_code)]
+    docs: Docs<'a>,
+    attributes: Vec<Attribute<'a>>,
+    name: Id<'a>,
+    path: UsePath<'a>,
+    with: Vec<WithEntry<'a>>,
+}
+
+impl<'a> WorldUseSlot<'a> {
+    fn parse(
+        tokens: &mut Tokenizer<'a>,
+        docs: Docs<'a>,
+        attributes: Vec<Attribute<'a>>,
+    ) -> ParseResult<Self> {
+        tokens.expect(Token::Use)?;
+        let name = parse_id(tokens)?;
+        tokens.expect(Token::Colon)?;
+        let path = UsePath::parse(tokens)?;
+        let with = parse_with_clause(tokens)?;
+        tokens.expect_semicolon()?;
+        Ok(WorldUseSlot { docs, attributes, name, path, with })
+    }
+}
+
 struct Import<'a> {
     docs: Docs<'a>,
     attributes: Vec<Attribute<'a>>,
     kind: ExternKind<'a>,
+    with: Vec<WithEntry<'a>>,
 }
 
 impl<'a> Import<'a> {
@@ -461,10 +557,16 @@ impl<'a> Import<'a> {
     ) -> ParseResult<Import<'a>> {
         tokens.expect(Token::Import)?;
         let kind = ExternKind::parse(tokens)?;
+        let with = parse_with_clause(tokens)?;
+        if !matches!(kind, ExternKind::Interface(..)) {
+            // Semicolons for Interface are handled by its closing `}`
+            tokens.expect_semicolon()?;
+        }
         Ok(Import {
             docs,
             attributes,
             kind,
+            with,
         })
     }
 }
@@ -473,6 +575,7 @@ struct Export<'a> {
     docs: Docs<'a>,
     attributes: Vec<Attribute<'a>>,
     kind: ExternKind<'a>,
+    with: Vec<WithEntry<'a>>,
 }
 
 impl<'a> Export<'a> {
@@ -483,10 +586,15 @@ impl<'a> Export<'a> {
     ) -> ParseResult<Export<'a>> {
         tokens.expect(Token::Export)?;
         let kind = ExternKind::parse(tokens)?;
+        let with = parse_with_clause(tokens)?;
+        if !matches!(kind, ExternKind::Interface(..)) {
+            tokens.expect_semicolon()?;
+        }
         Ok(Export {
             docs,
             attributes,
             kind,
+            with,
         })
     }
 }
@@ -515,9 +623,7 @@ impl<'a> ExternKind<'a> {
             // import foo: async? func(...)
             if clone.clone().eat(Token::Func)? || clone.clone().eat(Token::Async)? {
                 *tokens = clone;
-                let ret = ExternKind::Func(id, Func::parse(tokens)?);
-                tokens.expect_semicolon()?;
-                return Ok(ret);
+                return Ok(ExternKind::Func(id, Func::parse(tokens)?));
             }
 
             // import foo: interface { ... }
@@ -542,7 +648,6 @@ impl<'a> ExternKind<'a> {
             if !is_qualified_path {
                 *tokens = clone;
                 let path = UsePath::parse(tokens)?;
-                tokens.expect_semicolon()?;
                 return Ok(ExternKind::NamedPath(id, path));
             }
         }
@@ -550,9 +655,7 @@ impl<'a> ExternKind<'a> {
         // import foo
         // import foo/bar
         // import foo:bar/baz
-        let ret = ExternKind::Path(UsePath::parse(tokens)?);
-        tokens.expect_semicolon()?;
-        Ok(ret)
+        Ok(ExternKind::Path(UsePath::parse(tokens)?))
     }
 
     fn span(&self) -> Span {
@@ -1674,6 +1777,7 @@ fn err_expected(
     }
 }
 
+#[derive(Clone)]
 enum Attribute<'a> {
     Since { span: Span, version: Version },
     Unstable { span: Span, feature: Id<'a> },

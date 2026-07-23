@@ -15,7 +15,7 @@ pub fn dummy_module(resolve: &Resolve, world: WorldId, mangling: ManglingAndAbi)
             WorldItem::Function(func) => {
                 push_imported_func(&mut wat, resolve, None, func, mangling);
             }
-            WorldItem::Interface { id: import, .. } => {
+            WorldItem::Interface { id: import, .. } | WorldItem::UseSlot { id: import, .. } => {
                 for (_, func) in resolve.interfaces[*import].functions.iter() {
                     push_imported_func(&mut wat, resolve, Some(name), func, mangling);
                 }
@@ -40,7 +40,7 @@ pub fn dummy_module(resolve: &Resolve, world: WorldId, mangling: ManglingAndAbi)
             WorldItem::Function(func) => {
                 push_exported_func_intrinsics(&mut wat, resolve, None, func, mangling);
             }
-            WorldItem::Interface { id: export, .. } => {
+            WorldItem::Interface { id: export, .. } | WorldItem::UseSlot { id: export, .. } => {
                 for (_, func) in resolve.interfaces[*export].functions.iter() {
                     push_exported_func_intrinsics(&mut wat, resolve, Some(name), func, mangling);
                 }
@@ -57,7 +57,7 @@ pub fn dummy_module(resolve: &Resolve, world: WorldId, mangling: ManglingAndAbi)
             WorldItem::Function(func) => {
                 push_func_export(&mut wat, resolve, None, func, mangling);
             }
-            WorldItem::Interface { id: export, .. } => {
+            WorldItem::Interface { id: export, .. } | WorldItem::UseSlot { id: export, .. } => {
                 for (_, func) in resolve.interfaces[*export].functions.iter() {
                     push_func_export(&mut wat, resolve, Some(name), func, mangling);
                 }

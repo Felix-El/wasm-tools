@@ -174,14 +174,36 @@ impl Render for World {
                         docs.render(f, opts)?;
                     }
                     import(f, opts)?;
-                    write!(f, "{};\n", interface.name)?;
+                    write!(f, "{}", interface.name)?;
+                    if !interface.with.is_empty() {
+                        write!(f, " with {{")?;
+                        for (i, entry) in interface.with.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ",")?;
+                            }
+                            write!(f, " {} as {}", entry.slot_name, entry.use_target)?;
+                        }
+                        write!(f, " }}")?;
+                    }
+                    write!(f, ";\n")?;
                 }
                 WorldItem::NamedInterfaceExport(interface) => {
                     if let Some(docs) = &interface.docs {
                         docs.render(f, opts)?;
                     }
                     export(f, opts)?;
-                    write!(f, "{};\n", interface.name)?;
+                    write!(f, "{}", interface.name)?;
+                    if !interface.with.is_empty() {
+                        write!(f, " with {{")?;
+                        for (i, entry) in interface.with.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ",")?;
+                            }
+                            write!(f, " {} as {}", entry.slot_name, entry.use_target)?;
+                        }
+                        write!(f, " }}")?;
+                    }
+                    write!(f, ";\n")?;
                 }
                 WorldItem::FunctionImport(function) => {
                     if let Some(docs) = &function.docs {
@@ -198,6 +220,20 @@ impl Render for World {
                     render_function(f, opts, function)?;
                 }
                 WorldItem::Include(include) => include.render(f, opts)?,
+                WorldItem::UseSlot(slot) => {
+                    write!(f, "{}use {}: {}", opts.spaces(), slot.name, slot.interface_name)?;
+                    if !slot.with.is_empty() {
+                        write!(f, " with {{")?;
+                        for (i, entry) in slot.with.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ",")?;
+                            }
+                            write!(f, " {} as {}", entry.slot_name, entry.use_target)?;
+                        }
+                        write!(f, " }}")?;
+                    }
+                    write!(f, ";\n")?;
+                }
             }
         }
         let opts = &opts.outdent();
@@ -230,6 +266,9 @@ pub enum WorldItem {
 
     /// Include type
     Include(Include),
+
+    /// A `use name: path;` slot in a world.
+    UseSlot(WorldUseSlot),
 }
 
 impl WorldItem {
@@ -254,6 +293,9 @@ impl WorldItem {
     pub fn include(value: impl Into<Ident>) -> Self {
         Self::Include(Include::new(value))
     }
+    pub fn use_slot(value: WorldUseSlot) -> Self {
+        Self::UseSlot(value)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -265,6 +307,9 @@ pub struct WorldNamedInterface {
 
     /// Documentation associated with this interface.
     pub(crate) docs: Option<Docs>,
+
+    /// Identity equations from `with` clauses.
+    pub(crate) with: Vec<WithEntry>,
 }
 
 impl<N> From<N> for WorldNamedInterface
@@ -281,6 +326,7 @@ impl WorldNamedInterface {
         Self {
             name: name.into(),
             docs: None,
+            with: vec![],
         }
     }
 
@@ -299,4 +345,41 @@ impl WorldNamedInterface {
     pub fn docs(&self) -> Option<&Docs> {
         self.docs.as_ref()
     }
+
+    pub fn with(&self) -> &[WithEntry] {
+        &self.with
+    }
+
+    pub fn with_mut(&mut self) -> &mut Vec<WithEntry> {
+        &mut self.with
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
+pub struct WithEntry {
+    pub slot_name: Ident,
+    pub use_target: Ident,
+}
+
+impl WithEntry {
+    pub fn new(slot_name: impl Into<Ident>, use_target: impl Into<Ident>) -> Self {
+        Self {
+            slot_name: slot_name.into(),
+            use_target: use_target.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
+pub struct WorldUseSlot {
+    /// The local name of this slot.
+    pub name: Ident,
+    /// The interface path.
+    pub interface_name: Ident,
+    /// Identity equations from `with` clauses on this use-slot.
+    pub with: Vec<WithEntry>,
 }

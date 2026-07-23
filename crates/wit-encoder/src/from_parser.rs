@@ -1,7 +1,7 @@
 use crate::{
     Enum, Flags, Ident, Interface, InterfaceItem, Package, PackageName, Params, Record, Resource,
-    ResourceFunc, Result_, StandaloneFunc, Tuple, Type, TypeDef, TypeDefKind, Variant, World,
-    WorldItem,
+    ResourceFunc, Result_, StandaloneFunc, Tuple, Type, TypeDef, TypeDefKind, Variant, WithEntry,
+    World, WorldItem, WorldNamedInterface, WorldUseSlot,
 };
 use id_arena::Id;
 use wit_parser::PackageId;
@@ -64,12 +64,22 @@ impl<'a> Converter<'a> {
 
         for (key, item) in &world.imports {
             match item {
-                wit_parser::WorldItem::Interface { id, .. } => {
+                wit_parser::WorldItem::Interface {
+                    id, with, ..
+                } => {
                     let interface = self.resolve.interfaces.get(*id).unwrap();
                     let ident = self.interface_ident(package_id, Some(key), interface);
 
                     if interface.name.is_some() {
-                        output.item(WorldItem::named_interface_import(ident))
+                        let mut named = WorldNamedInterface::new(ident);
+                        named.with = with
+                            .iter()
+                            .map(|entry| WithEntry {
+                                slot_name: entry.slot_name.clone().into(),
+                                use_target: entry.use_target.clone().into(),
+                            })
+                            .collect();
+                        output.item(WorldItem::named_interface_import(named))
                     } else {
                         output.item(WorldItem::inline_interface_import(self.convert_interface(
                             package_id,
@@ -88,16 +98,27 @@ impl<'a> Converter<'a> {
                     let (target, item, rename) = self.convert_world_item_type(package_id, *id);
                     output.use_type(target, item, rename)
                 }
+                wit_parser::WorldItem::UseSlot { .. } => unreachable!(),
             }
         }
 
         for (key, item) in &world.exports {
             match item {
-                wit_parser::WorldItem::Interface { id, .. } => {
+                wit_parser::WorldItem::Interface {
+                    id, with, ..
+                } => {
                     let interface = self.resolve.interfaces.get(*id).unwrap();
                     let ident = self.interface_ident(package_id, Some(key), interface);
                     if interface.name.is_some() {
-                        output.item(WorldItem::named_interface_export(ident));
+                        let mut named = WorldNamedInterface::new(ident);
+                        named.with = with
+                            .iter()
+                            .map(|entry| WithEntry {
+                                slot_name: entry.slot_name.clone().into(),
+                                use_target: entry.use_target.clone().into(),
+                            })
+                            .collect();
+                        output.item(WorldItem::named_interface_export(named));
                     } else {
                         output.item(WorldItem::inline_interface_export(self.convert_interface(
                             package_id,
@@ -116,6 +137,31 @@ impl<'a> Converter<'a> {
                     let (target, item, rename) = self.convert_world_item_type(package_id, *id);
                     output.use_type(target, item, rename)
                 }
+                wit_parser::WorldItem::UseSlot { .. } => unreachable!(),
+            }
+        }
+
+        for (_, item) in &world.use_slots {
+            match item {
+                wit_parser::WorldItem::UseSlot {
+                    id, name, with, ..
+                } => {
+                    let interface = self.resolve.interfaces.get(*id).unwrap();
+                    let interface_name = self.interface_ident(package_id, None, interface);
+                    let with_entries = with
+                        .iter()
+                        .map(|entry| WithEntry {
+                            slot_name: entry.slot_name.clone().into(),
+                            use_target: entry.use_target.clone().into(),
+                        })
+                        .collect();
+                    output.item(WorldItem::UseSlot(WorldUseSlot {
+                        name: name.clone().into(),
+                        interface_name,
+                        with: with_entries,
+                    }));
+                }
+                _ => unreachable!(),
             }
         }
 
@@ -515,18 +561,17 @@ impl<'a> Converter<'a> {
         world_key: Option<&wit_parser::WorldKey>,
         interface: &wit_parser::Interface,
     ) -> Ident {
-        match &interface.name {
+        // Compute the interface path as it would appear in WIT
+        let path = match &interface.name {
             Some(name) => {
-                // Standalone
                 if interface.package == Some(package_id) {
-                    Ident::new(name.clone())
+                    name.clone()
                 } else {
                     let package = interface
                         .package
                         .map(|package_id| self.resolve.packages.get(package_id).unwrap());
-
                     match package {
-                        Some(package) => Ident::new(format!(
+                        Some(package) => format!(
                             "{}:{}/{}{}",
                             package.name.namespace,
                             package.name.name,
@@ -537,20 +582,23 @@ impl<'a> Converter<'a> {
                                 .as_ref()
                                 .map(|version| format!("@{version}"))
                                 .unwrap_or_else(|| "".to_string())
-                        )),
-                        None => Ident::new(name.clone()),
+                        ),
+                        None => name.clone(),
                     }
                 }
             }
             None => match world_key {
-                Some(world_key) => match world_key {
-                    wit_parser::WorldKey::Name(name) => Ident::new(name.clone()),
-                    wit_parser::WorldKey::Interface(_) => {
-                        unreachable!("inlined interface must have a world key name")
-                    }
-                },
-                None => panic!("inlined interface requires a world key"),
+                Some(wit_parser::WorldKey::Name(name)) => name.clone(),
+                _ => panic!("inlined interface requires a world key name"),
             },
+        };
+        // If the world key provides a label that differs from the path, use
+        // `label: path` syntax. Otherwise the ident is just the path.
+        match world_key {
+            Some(wit_parser::WorldKey::Name(label)) if label.as_str() != path => {
+                Ident::new(format!("{label}: {path}"))
+            }
+            _ => Ident::new(path),
         }
     }
 

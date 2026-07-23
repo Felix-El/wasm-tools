@@ -383,6 +383,10 @@ impl WorldMetadata {
                         let prev = map.insert(name.to_string(), data);
                         assert!(prev.is_none());
                     }
+                    WorldItem::UseSlot { .. } => {
+                        // Use slots don't carry their own metadata; they are identity
+                        // variables resolved during elaboration.
+                    }
                 },
 
                 // For interface imports/exports extract the stability/docs and
